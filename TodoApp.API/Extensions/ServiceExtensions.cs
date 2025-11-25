@@ -11,6 +11,7 @@ public static class ServiceExtensions
     public static void AddRuntimeServices(this IServiceCollection services)
     {
         services.AddScoped<AuthService>();
+        services.AddScoped<UserService>();
     }
 
     public static void AddConfiguredDbContext(
