@@ -54,6 +54,25 @@ public sealed class UserService(
         await userManager.DeleteAsync(user);
     }
 
+    public async Task<ApplicationUserDto?> GetDtoByIdAsync(string id, bool includeDeleted = false)
+    {
+        var query = dbContext.Users.AsQueryable();
+
+        if (!includeDeleted)
+            query = query.Where(u => !u.IsDeleted);
+
+        return await query
+            .Select(u => new ApplicationUserDto
+            {
+                Id = u.Id,
+                FirstName = u.FirstName,
+                LastName = u.LastName,
+                UserName = u.UserName,
+                Email = u.Email,
+            })
+            .FirstOrDefaultAsync(u => u.Id == id);
+    }
+
     public async Task<ApplicationUser?> GetByIdAsync(string id, bool includeDeleted = false)
     {
         var query = dbContext.Users.AsQueryable();
@@ -73,6 +92,23 @@ public sealed class UserService(
             .ToListAsync();
     }
 
+    public async Task<List<ApplicationUserDto>> GetUserDtosAsync(int page, int pageSize)
+    {
+        return await dbContext
+            .Users.OrderBy(u => u.Email)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(u => new ApplicationUserDto
+            {
+                Id = u.Id,
+                FirstName = u.FirstName,
+                LastName = u.LastName,
+                UserName = u.UserName,
+                Email = u.Email,
+            })
+            .ToListAsync();
+    }
+
     public async Task RestoreUserAsync(string userId)
     {
         var user = await GetByIdAsync(userId);
@@ -84,10 +120,28 @@ public sealed class UserService(
         await userManager.UpdateAsync(user);
     }
 
-    public async Task SoftDelete(string userId)
+    public async Task RestoreUserAsync(ApplicationUser user)
+    {
+        if (user is null)
+            return;
+
+        user.IsDeleted = false;
+        await userManager.UpdateAsync(user);
+    }
+
+    public async Task SoftDeleteAsync(string userId)
     {
         var user = await GetByIdAsync(userId);
 
+        if (user is null)
+            return;
+
+        user.IsDeleted = true;
+        await userManager.UpdateAsync(user);
+    }
+
+    public async Task SoftDeleteAsync(ApplicationUser user)
+    {
         if (user is null)
             return;
 
