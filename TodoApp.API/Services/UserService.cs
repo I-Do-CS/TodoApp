@@ -16,6 +16,7 @@ public sealed class UserService(
         ApplicationUserChangePasswordDto changePasswordDto
     )
     {
+        // Use UserManager for identity-specific change-password semantics.
         return await userManager.ChangePasswordAsync(
             user,
             changePasswordDto.CurrentPassword,
@@ -28,7 +29,7 @@ public sealed class UserService(
         ApplicationUserChangePasswordDto changePasswordDto
     )
     {
-        var user = await GetByIdAsync(userId);
+        var user = await GetByIdAsync(userId, includeDeleted: true);
 
         if (user is null)
         {
@@ -42,12 +43,13 @@ public sealed class UserService(
                 ]
             );
         }
+
         return await ChangePasswordAsync(user, changePasswordDto);
     }
 
     public async Task DeleteAsync(string id)
     {
-        var user = await GetByIdAsync(id);
+        var user = await GetByIdAsync(id, includeDeleted: true);
         if (user is null)
             return;
 
@@ -56,12 +58,13 @@ public sealed class UserService(
 
     public async Task<ApplicationUserDto?> GetDtoByIdAsync(string id, bool includeDeleted = false)
     {
-        var query = dbContext.Users.AsQueryable();
+        var query = dbContext.Users.AsQueryable().AsNoTracking();
 
         if (!includeDeleted)
             query = query.Where(u => !u.IsDeleted);
 
         return await query
+            .Where(u => u.Id == id)
             .Select(u => new ApplicationUserDto
             {
                 Id = u.Id,
@@ -70,12 +73,12 @@ public sealed class UserService(
                 UserName = u.UserName,
                 Email = u.Email,
             })
-            .FirstOrDefaultAsync(u => u.Id == id);
+            .FirstOrDefaultAsync();
     }
 
     public async Task<ApplicationUser?> GetByIdAsync(string id, bool includeDeleted = false)
     {
-        var query = dbContext.Users.AsQueryable();
+        var query = dbContext.Users.AsQueryable().AsNoTracking();
 
         if (!includeDeleted)
             query = query.Where(u => !u.IsDeleted);
@@ -85,8 +88,13 @@ public sealed class UserService(
 
     public async Task<List<ApplicationUser>> GetUsersAsync(int page, int pageSize)
     {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 200);
+
         return await dbContext
-            .Users.OrderBy(u => u.Email)
+            .Users.AsNoTracking()
+            .OrderBy(u => u.Email)
+            .ThenBy(u => u.Id) // stable ordering for paging
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync();
@@ -94,8 +102,13 @@ public sealed class UserService(
 
     public async Task<List<ApplicationUserDto>> GetUserDtosAsync(int page, int pageSize)
     {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 200);
+
         return await dbContext
-            .Users.OrderBy(u => u.Email)
+            .Users.AsNoTracking()
+            .OrderBy(u => u.Email)
+            .ThenBy(u => u.Id) // stable ordering for paging
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .Select(u => new ApplicationUserDto
@@ -111,13 +124,14 @@ public sealed class UserService(
 
     public async Task RestoreUserAsync(string userId)
     {
-        var user = await GetByIdAsync(userId);
+        var user = await GetByIdAsync(userId, includeDeleted: true);
 
         if (user is null)
             return;
 
         user.IsDeleted = false;
-        await userManager.UpdateAsync(user);
+        dbContext.Users.Update(user);
+        await dbContext.SaveChangesAsync();
     }
 
     public async Task RestoreUserAsync(ApplicationUser user)
@@ -126,18 +140,20 @@ public sealed class UserService(
             return;
 
         user.IsDeleted = false;
-        await userManager.UpdateAsync(user);
+        dbContext.Users.Update(user);
+        await dbContext.SaveChangesAsync();
     }
 
     public async Task SoftDeleteAsync(string userId)
     {
-        var user = await GetByIdAsync(userId);
+        var user = await GetByIdAsync(userId, includeDeleted: true);
 
         if (user is null)
             return;
 
         user.IsDeleted = true;
-        await userManager.UpdateAsync(user);
+        dbContext.Users.Update(user);
+        await dbContext.SaveChangesAsync();
     }
 
     public async Task SoftDeleteAsync(ApplicationUser user)
@@ -146,7 +162,8 @@ public sealed class UserService(
             return;
 
         user.IsDeleted = true;
-        await userManager.UpdateAsync(user);
+        dbContext.Users.Update(user);
+        await dbContext.SaveChangesAsync();
     }
 
     public async Task UpdateProfileAsync(ApplicationUser user, ApplicationUserUpdateDto updateDto)
@@ -154,12 +171,14 @@ public sealed class UserService(
         user.FirstName = updateDto.FirstName;
         user.LastName = updateDto.LastName ?? string.Empty;
 
-        await userManager.UpdateAsync(user);
+        // Use DbContext for a simple profile update to avoid extra UserManager overhead.
+        dbContext.Users.Update(user);
+        await dbContext.SaveChangesAsync();
     }
 
     public async Task UpdateProfileAsync(string userId, ApplicationUserUpdateDto updateDto)
     {
-        var user = await GetByIdAsync(userId);
+        var user = await GetByIdAsync(userId, includeDeleted: false);
 
         if (user is null)
             return;
